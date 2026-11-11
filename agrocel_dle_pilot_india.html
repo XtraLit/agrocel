@@ -678,142 +678,161 @@ function human(info){const g=new T.Group();
   g.traverse(o=>{if(o.isMesh)o.castShadow=true;});
   selectable(g,info);return g;}
 
-/* ---------- LAYOUT ---------- */
+/* ---------- LAYOUT — one feed pump + a valve battery (as on the Dead Sea UF skid).
+   Pond → F-101 → P-101 → FT-101 → PT-101 → brine header. Five headers run along the rear of the skid, stacked on one axis (z = ZH):
+   feed headers high (brine, water) and the eluate collect header under them; the acid feed and spent collect headers low.
+   Every column has two pipes only: a top line and a bottom line, each rising to the battery. Five actuated valves per column
+   sit on short branches off the headers: brine / water / eluate on the top line, acid / spent on the bottom line. ---------- */
 const COLX=[-10.5,-7.5,-4.5,-1.5,1.5,4.5,7.5,10.5];
-const cols=[],tvs=[],bvs=[],ecS=[],colStatus=[];let fv=null,dref=null;
+const CY0=0.2;                                   // columns hang 0.2 m higher on the skid: room for the bottom-line elbow
+const ZH=-2.0,ZV=-0.8,VZ=-1.45;                  // header stack z / column-line riser z / battery valve z
+const HDR={brine:4.55,water:4.15,eluate:3.75,acid:0.7,spent:0.3};
+const TL=HDR.eluate,BL=HDR.spent;                // top-line and bottom-line horizontal runs (straight into the eluate / spent branches)
+const HX0=-11.0,HX1=11.0;                        // battery span of the header runs
+const VROLE={brine:{h:'brine',line:'top',name:'Brine-in',duty:'brine header → top line → column (sorption, top → down)',open:['sorption']},
+  water:{h:'water',line:'top',name:'Water-in',duty:'water header → top line → column (water wash, top → down)',open:['wash']},
+  eluate:{h:'eluate',line:'top',name:'Eluate-out',duty:'column top → top line → eluate header (desorption)',open:['desorb']},
+  acid:{h:'acid',line:'bottom',name:'Acid-in',duty:'acid header → bottom line → column bottom (0.7 M HCl, bottom → up)',open:['desorb']},
+  spent:{h:'spent',line:'bottom',name:'Spent-out',duty:'column bottom → bottom line → spent header (raffinate + water wash)',open:['sorption','wash']}};
+const VKEYS=Object.keys(VROLE);
+const cols=[],valves=[],allValves=[],ecS=[],colStatus=[];let fv=null,dref=null;
 const sens=COLX.map(()=>({ec:240,ecT:240}));
 
 COLX.forEach((x,i)=>{const n=i+1;
   const col=column('C'+n,{color:C.accent,title:'Sorption Column C'+n,code:'radial-flow vessel · ~20 L',
-    body:'<b>Radial-flow</b> ion-sieve column (quarter-section). <b>One nozzle per end.</b><br>• <b>Sorption:</b> feed enters the top nozzle → distributor ring → <b>radial-inward</b> through the bed to the central collector → out the bottom.<br>• <b>Desorption:</b> acid enters the bottom, flows <b>up</b> through the bed, eluate exits the top.<br>Flow direction is set by the <b>TV</b> (top) &amp; <b>BV</b> (bottom) changeover valves.<br><br><b>Bed:</b> 20 kg LMO (λ-MnO₂), 5 cm radial layer, <b>~20 L</b>. <b>10 mg/g Li</b> in 2 h, recovery <b>&gt;85%</b>.'});
-  col.position.set(x,0,0);scene.add(col);cols.push(col);
-
-  const f=filter({color:C.brine,title:'Coarse Filter F'+n,code:'pre-filtration',body:'Dedicated <b>coarse pre-filter</b> on column '+n+'’s sorption channel — removes suspended solids before the bed.'},0.78);
-  f.position.set(x,0,-4.3);scene.add(f);
-  const p=pump({color:C.brine,title:'Feed Pump P'+n,code:'sorption · 8 m³/h',body:'<b>Centrifugal feed pump</b> for column '+n+'. Draws Agrocel brine from the pond through filter F'+n+' at <b>8 m³/h</b>.'},0.72);
-  p.position.set(x,0,-3.4);scene.add(p);
-  const fm=instrument('F',{color:C.brine,title:'Flowmeter FT'+n,code:'inlet flow',body:'<b>Flowmeter (FT)</b> on column '+n+'’s inlet — displays the <b>current feed flow rate</b> (8 m³/h during sorption).'},0.85);
-  fm.position.set(x,0.7,-2.6);scene.add(fm);
-  const pm=instrument('P',{color:C.brine,title:'Pressure meter PT'+n,code:'inlet pressure',body:'<b>Pressure meter (PT)</b> on column '+n+'’s inlet. Bed ΔP ≈ <b>12–16 kPa</b>. If the pressure rises above the set-point, it signals the PLC to trigger <b>automatic filter cleaning (backwash)</b>.'},0.85);
-  pm.position.set(x,0.7,-2.1);scene.add(pm);
-
-  const ec=analyzer({color:C.wash,title:'EC-meter EC'+n,code:'conductivity · УЭП',body:'Outlet <b>conductivity (EC) meter</b>. Controls the <b>water wash</b> after sorption — washing continues until the conductivity drops to set-point, clearing residual salts so they are not carried over into the eluate.'},0.85);
-  ec.position.set(x,0.35,0.9);scene.add(ec);
-  const ecv=valueSprite();ecv.position.set(x,0.95,0.9);labelGroup.add(ecv);ecS.push(ecv);
-  const tv=valveUnit({color:C.brine,title:'Top Changeover Valve TV'+n,code:'feed ↔ eluate',body:'<b>Top changeover valve</b> on column '+n+'’s single top nozzle. Selects the path:<br>• Sorption / washes → <b>feed line → column</b> (down)<br>• Desorption → <b>column → eluate line</b> (up).<br>Actuator colour shows the open path.'},0.6);
-  tv.position.set(x,3.45,-0.1);scene.add(tv);tvs.push(tv);
-  const bv=valveUnit({color:C.acid,title:'Bottom Changeover Valve BV'+n,code:'outlet ↔ acid',body:'<b>Bottom changeover valve</b> on column '+n+'’s single bottom nozzle. Selects:<br>• Sorption / washes → <b>column → outlet</b> (EC, pH → spent brine)<br>• Desorption → <b>acid line → column</b> (counter-current up).'},0.6);
-  bv.position.set(x,0.22,0.16);scene.add(bv);bvs.push(bv);
-  if(i===5){dref={f:f,p:p,fm:fm,pm:pm,ec:ec};}
+    body:'<b>Radial-flow</b> ion-sieve column (quarter-section). <b>One nozzle per end.</b><br>• <b>Sorption:</b> feed enters the top nozzle → distributor ring → <b>radial-inward</b> through the bed to the central collector → out the bottom.<br>• <b>Desorption:</b> acid enters the bottom, flows <b>up</b> through the bed, eluate exits the top.<br><b>Two pipes per column:</b> a top line and a bottom line, both running to the <b>valve battery</b>. Five actuated valves there pick the medium: brine / water / eluate on the top line, acid / spent on the bottom line.<br><br><b>Bed:</b> 20 kg LMO (λ-MnO₂), 5 cm radial layer, <b>~20 L</b>. <b>10 mg/g Li</b> in 2 h, recovery <b>&gt;85%</b>.'});
+  col.position.set(x,CY0,0);scene.add(col);cols.push(col);
+  const ec=analyzer({color:C.wash,title:'EC-meter EC'+n,code:'conductivity · УЭП',body:'Outlet <b>conductivity (EC) meter</b> on column '+n+'’s bottom line. Controls the <b>water wash</b> after sorption — washing continues until the conductivity drops to set-point, clearing residual salts so they are not carried over into the eluate.'},0.7);
+  ec.position.set(x,BL,-0.45);scene.add(ec);
+  const ecv=valueSprite();ecv.position.set(x,1.05,-0.45);labelGroup.add(ecv);ecS.push(ecv);
+  const vs={};
+  VKEYS.forEach(k=>{const R=VROLE[k];
+    const v=valveUnit({color:C.accent,title:'Valve '+R.name+' · C'+n,code:'actuated · valve battery',body:'<b>Actuated ball valve</b>, PLC-controlled, in the <b>valve battery</b> on column C'+n+'’s '+R.h+'-header branch.<br>Duty: <b>'+R.duty+'</b>.<br>Actuator colour = mode colour when open, grey when closed.'},0.36);
+    v.rotation.y=Math.PI/2;v.position.set(x,HDR[R.h],VZ);v.userData.role=k;scene.add(v);vs[k]=v;allValves.push(v);});
+  valves.push(vs);
 });
-/* UF-style FRP skid (as on the Dead Sea pilot): base frame on feet, portal frames between columns, columns hang in two collars on cradle rails */
+
+/* UF-style FRP skid (as on the Dead Sea pilot): base frame on feet, portal frames between columns, columns hang in two collars
+   on cradle rails; a taller rear rack carries the header stack and the valve battery */
 (function(){const g=new T.Group();
   const frp=new T.MeshStandardMaterial({color:0x6e6834,metalness:0,roughness:0.7,envMapIntensity:0.35});
   const frpD=new T.MeshStandardMaterial({color:0x2f3226,metalness:0,roughness:0.85});
-  const PX=[-12,-9,-6,-3,0,3,6,9,12],ZF=1.15,L=24.3,TY=3.0,CY=[1.0,2.3],RZ=0.42;
-  // base frame: two side beams + a cross beam under every portal, on feet
-  [-ZF,ZF].forEach(z=>{const b=box(L,0.16,0.16,frp);b.position.set(0,0.12,z);g.add(b);
-    const t=box(L,0.12,0.12,frp);t.position.set(0,TY,z);g.add(t);});
-  PX.forEach(x=>{const b=box(0.16,0.16,ZF*2,frp);b.position.set(x,0.12,0);g.add(b);
-    [-ZF,ZF].forEach(z=>{const f=box(0.3,0.04,0.3,frpD);f.position.set(x,0.02,z);g.add(f);
-      const u=box(0.12,TY-0.2,0.12,frp);u.position.set(x,0.2+(TY-0.2)/2,z);g.add(u);});
+  const PX=[-12,-9,-6,-3,0,3,6,9,12],ZF=1.15,ZR=-2.3,L=24.3,TY=3.0,RY=4.8,CY=[CY0+1.0,CY0+2.3],RZ=0.42;
+  const zc=(ZF+ZR)/2,zw=ZF-ZR;                    // base frame spans the rack too
+  [-ZF,ZF,ZR].forEach(z=>{const b=box(L,0.16,0.16,frp);b.position.set(0,0.12,z);g.add(b);});
+  [-ZF,ZF].forEach(z=>{const t=box(L,0.12,0.12,frp);t.position.set(0,TY,z);g.add(t);});
+  [-ZF,ZR].forEach(z=>{const t=box(L,0.12,0.12,frp);t.position.set(0,RY,z);g.add(t);});
+  PX.forEach(x=>{const b=box(0.16,0.16,zw,frp);b.position.set(x,0.12,zc);g.add(b);
+    [ZF,-ZF,ZR].forEach(z=>{const f=box(0.3,0.04,0.3,frpD);f.position.set(x,0.02,z);g.add(f);
+      const h=(z===ZF?TY:RY);const u=box(0.12,h-0.2,0.12,frp);u.position.set(x,0.2+(h-0.2)/2,z);g.add(u);});
     const tb=box(0.12,0.12,ZF*2,frp);tb.position.set(x,TY,0);g.add(tb);
+    const rb=box(0.12,0.12,-ZF-ZR,frp);rb.position.set(x,RY,(ZR-ZF)/2);g.add(rb);
+    const hb=box(0.1,0.1,ZR*-1-ZF,frp);hb.position.set(x,HDR.eluate-0.15,(ZR-ZF)/2);g.add(hb);   // header shelf under the top stack
     CY.forEach(y=>{const cb=box(0.1,0.1,ZF*2,frp);cb.position.set(x,y,0);g.add(cb);});});
-  // cradle rails either side of the column row, at both collar heights
   CY.forEach(y=>[-RZ-0.04,RZ+0.04].forEach(z=>{const r=box(L,0.1,0.08,frp);r.position.set(0,y,z);g.add(r);}));
-  // two collars per column, bolted to the rails by lugs: the column hangs, its bottom nozzle stays free
   const cs=Math.PI*0.05,cl=Math.PI*1.5;
   COLX.forEach(x=>CY.forEach(y=>{const c=cyl(0.375,0.375,0.12,40,frpD,{open:true,ts:cs,tl:cl});c.position.set(x,y,0);g.add(c);
     [-1,1].forEach(s=>{const lug=box(0.18,0.14,0.1,frpD);lug.position.set(x,y,s*(RZ-0.02));g.add(lug);
       const bolt=cyl(0.025,0.025,0.22,8,M.dark);bolt.position.set(x,y,s*(RZ+0.04));g.add(bolt);});}));
   g.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
-  selectable(g,{color:C.accent,title:'Column Skid',code:'FRP · UF-style · 24.3 × 2.3 m',body:'All eight columns sit on <b>one FRP skid</b> (glass-fibre pultruded profiles, no steel near the acid), built like a factory <b>ultrafiltration unit</b>: a base frame on feet, a <b>portal frame between every two columns</b>, and two cradle rails along the row.<br>Each column <b>hangs in two collars</b> bolted to the rails, so its bottom nozzle and the bottom changeover valve stay free for piping.'});
+  selectable(g,{color:C.accent,title:'Column Skid + Valve Battery',code:'FRP · UF-style · 24.3 × 3.5 m',body:'All eight columns and the <b>valve battery</b> sit on <b>one FRP skid</b> (glass-fibre pultruded profiles, no steel near the acid), built like a factory <b>ultrafiltration unit</b>: a base frame on feet, a <b>portal frame between every two columns</b>, cradle rails along the row and a taller <b>rear rack</b> for the headers.<br>Each column <b>hangs in two collars</b> bolted to the rails.<br>The rear rack carries five headers on one axis — <b>brine, water</b> (feed) and <b>eluate</b> (collect) high, <b>acid</b> (feed) and <b>spent</b> (collect) low — and all <b>40 actuated valves</b> (5 per column) on short branches off them.'});
   scene.add(g);})();
-fv=valveUnit({color:C.eluate,title:'Eluate Valve EV',code:'eluate → product tank',body:'<b>Motorized eluate valve</b> on the eluate manifold. Routes the desorption eluate from the column tops to the <b>Eluate accumulator</b> (product). Actuator colour shows the live flow.'},0.72);
-fv.position.set(11.0,3.5,0.2);scene.add(fv);
-const dv=valveUnit({color:C.waste,title:'Discharge Valve DV',code:'effluent → spent brine',body:'<b>Discharge valve</b> on the wash header. Routes the sorption raffinate and the EC-controlled water wash to the <b>Spent Brine</b> accumulator.'},0.72);
-dv.position.set(-11.5,0.5,3.0);scene.add(dv);
 
-const pondG=pond(9,6,1.8,['Accumulation Pond','Agrocel brine · Li 7 ppm'],{color:C.brine,title:'Accumulation Pond',code:'Agrocel feed brine',body:'Large open <b>accumulation pond</b> of <b>Agrocel feed brine</b> (<b>Li ≈ 7 ppm</b>) — within XtraLit DLE’s low-concentration window. Supplies all eight sorption channels via coarse filters, plus the water wash.'});
+/* one brine feed train for the whole skid */
+const f101=filter({color:C.brine,title:'Coarse Filter F-101',code:'pre-filtration · whole feed',body:'One <b>coarse pre-filter</b> on the skid’s single brine line — removes suspended solids before the brine header and the valve battery.'},0.85);
+f101.rotation.y=Math.PI/2;f101.position.set(-9.2,0,-4.6);scene.add(f101);
+const p101=pump({color:C.brine,title:'Brine Pump P-101',code:'sorption · 64 m³/h',body:'The skid’s <b>single brine feed pump</b>. Draws Agrocel brine from the pond through filter F-101 into the <b>brine header</b> at <b>64 m³/h</b>; the valve battery splits it to the eight columns, <b>8 m³/h each</b>.'},0.95);
+p101.rotation.y=Math.PI/2;p101.position.set(-7.8,0,-4.6);scene.add(p101);
+const ft101=instrument('F',{color:C.brine,title:'Flowmeter FT-101',code:'brine header flow',body:'<b>Flowmeter (FT-101)</b> on the brine line after P-101 — shows the <b>total feed flow</b> (64 m³/h during sorption = 8 m³/h × 8 columns).'},0.85);
+ft101.position.set(-6.4,0.7,-4.6);scene.add(ft101);
+const pt101=instrument('P',{color:C.brine,title:'Pressure meter PT-101',code:'brine header pressure',body:'<b>Pressure meter (PT-101)</b> on the brine line. Bed ΔP ≈ <b>12–16 kPa</b>. If the pressure rises above the set-point, it signals the PLC to trigger <b>automatic filter cleaning (backwash)</b>.'},0.85);
+pt101.position.set(-5.7,0.7,-4.6);scene.add(pt101);
+dref={f:f101,p:p101,fm:ft101,pm:pt101,ec:null};
+
+fv=valveUnit({color:C.eluate,title:'Eluate Valve EV',code:'eluate header → product tank',body:'<b>Motorized eluate valve</b> at the end of the eluate header. Routes the desorption eluate collected through the valve battery to the <b>Eluate accumulator</b> (product). Actuator colour shows the live flow.'},0.72);
+fv.position.set(12.7,HDR.eluate,ZH);scene.add(fv);
+const dv=valveUnit({color:C.waste,title:'Discharge Valve DV',code:'spent header → spent brine',body:'<b>Discharge valve</b> at the end of the spent header. Routes the sorption raffinate and the EC-controlled water wash to the <b>Spent Brine</b> accumulator.'},0.72);
+dv.rotation.y=Math.PI/2;dv.position.set(12.6,BL,0.8);scene.add(dv);
+
+const pondG=pond(9,6,1.8,['Accumulation Pond','Agrocel brine · Li 7 ppm'],{color:C.brine,title:'Accumulation Pond',code:'Agrocel feed brine',body:'Large open <b>accumulation pond</b> of <b>Agrocel feed brine</b> (<b>Li ≈ 7 ppm</b>) — within XtraLit DLE’s low-concentration window. Feeds the skid’s <b>one brine pump P-101</b> through filter F-101; the brine header and the valve battery split it to all eight columns.'});
 pondG.position.set(-15,1.0,-8.5);scene.add(pondG);
 const freshT=tank(1.0,2.2,0x4fb3e6,['Fresh Water','Water-wash source'],{color:C.wash,title:'Fresh Water Tank',code:'water wash · drum',body:'<b>Fresh-water tank</b> feeding the <b>water wash</b> after sorption. Displaces interstitial feed brine before acid; EC-controlled. Separate from the brine pond.'},{nozAngle:0,lc:C.wash});
-freshT.position.set(-15,0,-2.0);scene.add(freshT);
-const freshP=pump({color:C.wash,title:'Wash Pump WP',code:'water-wash duty',body:'<b>Wash pump</b>. Delivers fresh water to all columns in parallel for the post-sorption water wash.'},0.82);
-freshP.position.set(-12.8,0,-2.0);scene.add(freshP);
+freshT.position.set(-15,0,-3.2);scene.add(freshT);
+const freshP=pump({color:C.wash,title:'Wash Pump WP',code:'water-wash duty',body:'<b>Wash pump</b>. Delivers fresh water into the <b>water header</b>; the valve battery opens it to all columns in parallel for the post-sorption water wash.'},0.82);
+freshP.position.set(-12.8,0,-3.2);scene.add(freshP);
 
-const acidT=tank(1.5,3.2,0xff9f43,['HCl Tank · 0.7 M','Desorption acid'],{color:C.acid,title:'HCl Storage (front side)',code:'0.7 M · 1–3 m³',body:'<b>Hydrochloric acid 0.7 M</b> — desorption regenerant on the <b>front side</b>. Acid enters each column at the <b>bottom</b> and flows <b>upward, counter-current</b> to sorption.'},{nozAngle:Math.PI,lc:C.acid});
-acidT.position.set(15,0,5.0);scene.add(acidT);
-const acidP=pump({color:C.acid,title:'Acid Pump AP (front)',code:'desorption duty',body:'<b>Acid feed pump</b> on the front side. Pushes 0.7 M HCl into the acid header feeding <b>every column bottom in parallel</b>; eluate leaves the tops to the eluate manifold.'},0.85);
-acidP.position.set(13,0,3.4);scene.add(acidP);
+const acidT=tank(1.5,3.2,0xff9f43,['HCl Tank · 0.7 M','Desorption acid'],{color:C.acid,title:'HCl Storage',code:'0.7 M · 1–3 m³',body:'<b>Hydrochloric acid 0.7 M</b> — desorption regenerant. Acid goes into the <b>acid header</b>; the valve battery sends it to each column’s <b>bottom</b> line, so it flows <b>upward, counter-current</b> to sorption.'},{nozAngle:0,lc:C.acid});
+acidT.position.set(-15,0,3.4);scene.add(acidT);
+const acidP=pump({color:C.acid,title:'Acid Pump AP',code:'desorption duty',body:'<b>Acid feed pump</b>. Pushes 0.7 M HCl into the <b>acid header</b>; the valve battery opens it to <b>every column bottom in parallel</b>, and eluate leaves the tops into the eluate header.'},0.85);
+acidP.position.set(-13,0,3.4);scene.add(acidP);
 
-const eluateT=tank(1.5,3.0,0xffd23f,['Eluate Tank','Product · Li ≥2000 ppm*'],{color:C.eluate,title:'Eluate Accumulator',code:'product · 1–3 m³',body:'Collects the <b>Li-rich eluate</b> (product). Target eluate <b>Li ≥ 2000 ppm</b> — a <b>≥285×</b> enrichment over the 7 ppm feed.<br><br><b>*Note:</b> the achievable eluate concentration still requires <b>additional pilot study</b> to confirm.'},{nozAngle:-Math.PI/2,lc:C.eluate});
-eluateT.position.set(-2,0,7.5);scene.add(eluateT);
+const eluateT=tank(1.5,3.0,0xffd23f,['Eluate Tank','Product · Li ≥2000 ppm*'],{color:C.eluate,title:'Eluate Accumulator',code:'product · 1–3 m³',body:'Collects the <b>Li-rich eluate</b> (product). Target eluate <b>Li ≥ 2000 ppm</b> — a <b>≥285×</b> enrichment over the 7 ppm feed.<br><br><b>*Note:</b> the achievable eluate concentration still requires <b>additional pilot study</b> to confirm.'},{nozAngle:Math.PI,lc:C.eluate});
+eluateT.position.set(15.6,0,ZH);scene.add(eluateT);
 // sulfate / tails tank removed for this site — non-product effluent reports to the spent-brine accumulator
 
-const spentT=tank(1.8,3.4,0x3c6b4e,['Spent Brine','Raffinate + washes'],{color:C.waste,title:'Spent Brine Accumulator',code:'discharge · large tank',body:'<b>Spent-brine accumulator</b>. Receives the sorption raffinate and the EC-controlled water wash via the discharge header.'},{nozAngle:-Math.PI/2,lc:C.waste});
-spentT.position.set(-13,0,7.5);scene.add(spentT);
+const spentT=tank(1.8,3.4,0x3c6b4e,['Spent Brine','Raffinate + washes'],{color:C.waste,title:'Spent Brine Accumulator',code:'discharge · large tank',body:'<b>Spent-brine accumulator</b>. Receives the sorption raffinate and the EC-controlled water wash via the spent header.'},{nozAngle:Math.PI,lc:C.waste});
+spentT.position.set(15.9,0,3.2);scene.add(spentT);
 const operator=human({color:C.accent,title:'Operator',code:'scale reference',body:'Shown for <b>scale</b> — about three-quarters of a column tall.'});
 operator.position.set(-1.0,0,2.9);operator.rotation.y=Math.PI;operator.scale.setScalar(1.5);scene.add(operator);
 
-const plcUnit=plc({color:C.accent,title:'PLC Control Cabinet',code:'autonomous operation',body:'The pilot runs <b>autonomously</b> under a <b>PLC controller</b>: it sequences sorption → water wash → desorption, actuates the TV / BV / FV / DV valves, paces the pumps to 8 m³/h per column and holds the EC set-point. ≈ 8 full cycles per day, &gt;1 kg Li₂CO₃ per hour.'});
+const plcUnit=plc({color:C.accent,title:'PLC Control Cabinet',code:'autonomous operation',body:'The pilot runs <b>autonomously</b> under a <b>PLC controller</b>: it sequences sorption → water wash → desorption, switches the <b>40 battery valves</b> (5 per column) and EV / DV, runs feed pump P-101 at <b>64 m³/h</b> (8 m³/h per column) and holds the EC set-point. ≈ 8 full cycles per day, &gt;1 kg Li₂CO₃ per hour.'});
 plcUnit.position.set(5.5,0,3.4);scene.add(plcUnit);
 const colLabels=cols.map((c,i)=>addLabel(colLabel('C'+(i+1)),c.position.x,c.position.y+c.userData.lbl[1],c.position.z));
 [pondG,freshT,acidT,eluateT,spentT,plcUnit].forEach(o=>{const L=o.userData.lbl;if(!L)return;
   addLabel(label(L[0],{scale:1.05,fs:42,subfs:31,border:hx(L[2])}),o.position.x,o.position.y+L[1],o.position.z);});
 
 /* sorption-only banner (8 m³/h + duration/capacity/recovery) */
-const sorpAnno=addLabel(label(['SORPTION · 8 m³/h × 8 columns','2 h · 10 mg/g Li · recovery >85%'],{scale:1.0,fs:36,subfs:30,border:hx(C.brine)}),0,4.5,-0.6);
+const sorpAnno=addLabel(label(['SORPTION · 8 m³/h × 8 columns','2 h · 10 mg/g Li · recovery >85%'],{scale:1.0,fs:36,subfs:30,border:hx(C.brine)}),0,5.6,-0.6);
 
-/* ---------- PIPING — shared TOP & BOTTOM manifolds. Liquid runs tank → manifold → columns → manifold → tank along the SAME pipes in every mode ---------- */
-const HY=0.7;
-function A(o,x){return o.clone().add(new T.Vector3(x,0,0));}
-const TOPY=3.75,TOPZ=-0.75,BOTY=0.4,BOTZ=1.9,XL=-11.1,XR=11.1;
-// the two shared manifolds — always carrying liquid
-makePipe('topman',[[XL,TOPY,TOPZ],[XR,TOPY,TOPZ]],{r:0.085});
-makePipe('botman',[[XR,BOTY,BOTZ],[XL,BOTY,BOTZ]],{r:0.085});
-// pond supply header to the brine skids
-makePipe('pondhdr',[[-10.3,0.65,-6.4],[-10.3,HY,-4.9],[10.5,HY,-4.9]],{r:0.08});
+/* ---------- PIPING — headers at the rear, two lines per column, valves on the header branches ---------- */
+function A(o,x){return o.clone().add(new T.Vector3(x,CY0,0));}
+// brine: pond -> F-101 -> P-101 -> FT-101 -> PT-101 -> riser -> tee into the brine header
+makePipe('btrain',[[-10.3,0.7,-6.4],[-10.3,0.7,-4.6],[-5,0.7,-4.6],[-5,HDR.brine,-4.6],[-5,HDR.brine,ZH]],{r:0.09});
+makePipe('bhdrL',[[-5,HDR.brine,ZH],[HX0,HDR.brine,ZH]],{r:0.085});
+makePipe('bhdrR',[[-5,HDR.brine,ZH],[HX1,HDR.brine,ZH]],{r:0.085});
+// water: tank -> wash pump -> riser -> water header
+makePipe('freshsup',[[-13.8,1.25,-3.2],[-12.8,1.25,-3.2],[-12.8,0.9,-3.2]]);
+makePipe('whdr',[[-12.8,1.05,-3.2],[-12.8,HDR.water,-3.2],[-12.8,HDR.water,ZH],[HX1,HDR.water,ZH]],{r:0.085});
+// acid: tank -> acid pump -> acid header (low)
+makePipe('acidsup',[[-13.3,1.25,3.4],[-13,1.25,3.4],[-13,0.9,3.4]]);
+makePipe('ahdr',[[-13,1.05,3.4],[-12.6,1.05,3.4],[-12.6,HDR.acid,3.4],[-12.6,HDR.acid,ZH],[HX1,HDR.acid,ZH]],{r:0.085});
+// eluate header -> EV -> eluate tank
+makePipe('ehdr',[[HX0,HDR.eluate,ZH],[13.4,HDR.eluate,ZH],[13.4,1.25,ZH],[14.1,1.25,ZH]],{r:0.085});
+// spent header -> DV -> spent tank
+makePipe('shdr',[[HX0,BL,ZH],[12.6,BL,ZH],[12.6,BL,3.2],[12.6,1.25,3.2],[14.1,1.25,3.2]],{r:0.085});
 COLX.forEach((x,i)=>{const TOP=A(cols[i].userData.TOP,x),BOT=A(cols[i].userData.BOT,x);
-  // TOP drop: TOP manifold -> TV -> column top  (feed-in down / eluate-out up — same pipe)
-  makePipe('tdrop_'+i,[[x,TOPY,TOPZ],[x,3.5,-0.1],[TOP.x,TOP.y,0]],{r:0.075});
-  // BOTTOM drop: column bottom -> BV -> EC -> pH -> BOTTOM manifold  (product-out down / acid-in up — same pipe)
-  makePipe('bdrop_'+i,[[BOT.x,BOT.y,0],[x,0.22,0.16],[x,0.35,0.45],[x,0.35,0.9],[x,0.35,1.3],[x,BOTY,BOTZ]],{r:0.075});
-  // brine skid: pond -> filter -> pump -> FT -> PT -> riser -> TOP manifold
-  makePipe('brine_'+i,[[x,HY,-4.9],[x,HY,-4.3],[x,HY,-3.4],[x,HY,-2.6],[x,HY,-2.1],[x,HY,-1.6],[x,TOPY,-1.6],[x,TOPY,TOPZ]]);
+  // top line: battery riser -> along z -> down to the top nozzle (feed down / eluate up — same pipe)
+  makePipe('tstub_'+i,[[x,HDR.brine,ZV],[x,TL,ZV]],{r:0.075});
+  makePipe('ctop_'+i,[[x,TL,ZV],[x,TL,0],[TOP.x,TOP.y,0]],{r:0.075});
+  // bottom line: bottom nozzle -> elbow -> EC -> battery (outlet down / acid up — same pipe)
+  makePipe('cbot_'+i,[[BOT.x,BOT.y,0],[x,BL,0],[x,BL,ZV]],{r:0.075});
+  makePipe('bstub_'+i,[[x,HDR.acid,ZV],[x,BL,ZV]],{r:0.075});
+  // battery branches (one valve on each)
+  makePipe('vb_'+i,[[x,HDR.brine,ZH],[x,HDR.brine,ZV]],{r:0.06});
+  makePipe('vw_'+i,[[x,HDR.water,ZH],[x,HDR.water,ZV]],{r:0.06});
+  makePipe('ve_'+i,[[x,TL,ZV],[x,TL,ZH]],{r:0.06});
+  makePipe('va_'+i,[[x,HDR.acid,ZH],[x,HDR.acid,ZV]],{r:0.06});
+  makePipe('vs_'+i,[[x,BL,ZV],[x,BL,ZH]],{r:0.06});
 });
-// fresh water ties into the TOP manifold (left)
-makePipe('freshsup',[[-13.8,1.25,-2.0],[-12.8,1.25,-2.0],[-12.8,0.9,-2.0]]);
-makePipe('freshtie',[[-12.8,1.05,-2.0],[-12.8,TOPY,-2.0],[XL,TOPY,TOPZ]],{r:0.08});
-// acid ties into the BOTTOM manifold (right)
-makePipe('acidsup',[[13.3,1.25,5.0],[13,1.25,5.0],[13,0.9,3.4]]);
-makePipe('acidtie',[[13,1.05,3.4],[13,BOTY,3.4],[13,BOTY,BOTZ],[XR,BOTY,BOTZ]],{r:0.08});
-// discharge tie: BOTTOM manifold -> diverter -> spent brine
-makePipe('dischtie',[[XL,BOTY,BOTZ],[-11.5,BOTY,BOTZ],[-11.5,0.5,3.0]],{r:0.08});
-makePipe('dv_spent',[[-11.5,0.5,3.0],[-13,0.5,4.2],[-13,1.0,4.2],[-13,1.25,5.4]],{r:0.08});
-// eluate tie: TOP manifold -> eluate valve EV -> eluate tank
-makePipe('eluatetie',[[XR,TOPY,TOPZ],[XR,TOPY,0.2],[11.0,3.5,0.2]],{r:0.08});
-makePipe('frac_eluate',[[11.0,3.5,0.2],[11.0,3.5,3.9],[-2,3.9,3.9],[-2,1.25,3.9],[-2,1.25,5.5]]);
-makePipe('frac_waste',[[11.0,3.66,0.35],[11.0,3.66,4.2],[-13,4.2,4.2],[-13,1.25,4.2],[-13,1.25,5.4]]);
 
 /* ---------- STATE ---------- */
 const state={mode:'sorption',autoRot:false,cycle:false,cycT:0,labels:true};
-function pipeActive(p){const m=state.mode,k=p.kind;const feed=(m==='sorption'||m==='wash');
-  if(k==='topman'||k==='botman'||k.startsWith('tdrop_')||k.startsWith('bdrop_'))return true;
-  if(k==='pondhdr'||k.startsWith('brine_'))return m==='sorption';
-  if(k==='freshsup'||k==='freshtie')return m==='wash';
-  if(k==='acidsup'||k==='acidtie')return m==='desorb';
-  if(k==='dischtie')return feed;
-  if(k==='dv_spent')return m==='sorption'||m==='wash';
-  if(k==='eluatetie')return m==='desorb';
-  if(k==='frac_eluate')return m==='desorb';
-  if(k==='frac_waste')return false;return false;}
+function pipeActive(p){const m=state.mode,k=p.kind;
+  if(k.startsWith('ctop_')||k.startsWith('cbot_'))return true;
+  if(k==='btrain'||k==='bhdrL'||k==='bhdrR'||k.startsWith('vb_'))return m==='sorption';
+  if(k==='freshsup'||k==='whdr'||k.startsWith('vw_'))return m==='wash';
+  if(k.startsWith('tstub_'))return m==='sorption'||m==='wash';
+  if(k==='acidsup'||k==='ahdr'||k.startsWith('va_')||k.startsWith('bstub_'))return m==='desorb';
+  if(k==='ehdr'||k.startsWith('ve_'))return m==='desorb';
+  if(k==='shdr'||k.startsWith('vs_'))return m==='sorption'||m==='wash';
+  return false;}
 function pipeColor(p){return IND.mode[state.mode];}
 
 const el=id=>document.getElementById(id);
 const MODES={
-  sorption:{name:'SORPTION',col:'#ff9933',flow:'8 m³/h × 8',hydra:'parallel · top↓',acid:'—',route:'Brine → spent brine',desc:'Rear feed: pond → filter → pump → flowmeter → pressure meter → column (radial), 8 m³/h each. Sorption runs 2 h → 10 mg/g Li, recovery >85%. Raffinate → spent brine.'},
-  wash:{name:'WATER WASH',col:'#1a3ad6',flow:'—',hydra:'parallel · top↓',acid:'—',route:'Wash → spent brine (EC)',desc:'Fresh water from the Wash Tank, top→down through each column. Displaces interstitial feed brine before acid; EC-controlled to set-point. Effluent → spent brine.'},
-  desorb:{name:'DESORPTION',col:'#138808',flow:'—',hydra:'parallel · bottom↑',acid:'bottom → top ↑',route:'Eluate → product tank',desc:'0.7 M HCl from the acid tank enters every column BOTTOM in parallel and flows UP through the bed (counter-current to sorption); eluate exits the TOP to the eluate manifold and is collected in the Eluate accumulator (≥2000 ppm Li, pending study).'}};
+  sorption:{name:'SORPTION',col:'#ff9933',flow:'8 m³/h × 8',hydra:'parallel · top↓',acid:'—',route:'Brine → spent brine',desc:'One feed line: pond → filter F-101 → pump P-101 → flowmeter → pressure meter → brine header → valve battery → 8 columns in parallel (radial), 8 m³/h each, 64 m³/h total. Sorption runs 2 h → 10 mg/g Li, recovery >85%. Raffinate → spent brine.'},
+  wash:{name:'WATER WASH',col:'#1a3ad6',flow:'—',hydra:'parallel · top↓',acid:'—',route:'Wash → spent brine (EC)',desc:'Fresh water from the Wash Tank via the water header and the valve battery, top→down through each column. Displaces interstitial feed brine before acid; EC-controlled to set-point. Effluent → spent brine.'},
+  desorb:{name:'DESORPTION',col:'#138808',flow:'—',hydra:'parallel · bottom↑',acid:'bottom → top ↑',route:'Eluate → product tank',desc:'0.7 M HCl from the acid tank enters every column BOTTOM in parallel and flows UP through the bed (counter-current to sorption); eluate exits the TOP through the battery into the eluate header and is collected in the Eluate accumulator (≥2000 ppm Li, pending study).'}};
 
 function refreshUI(){const md=MODES[state.mode];el('modeName').textContent=md.name;el('modeName').style.color=md.col;
   el('flowval').textContent=md.flow;el('flowval').style.color=state.mode==='sorption'?'#ff9933':'#92a3b0';
@@ -827,8 +846,7 @@ function refreshUI(){const md=MODES[state.mode];el('modeName').textContent=md.na
 function setMode(m){state.mode=m;
   sens.forEach(s=>{if(m==='sorption'){s.ec=240;s.ecT=240;}else if(m==='wash'){s.ec=205;s.ecT=1.8;}else{s.ec=58;s.ecT=62;}});
   const on=IND.mode[m];
-  tvs.forEach(v=>{v.userData.act.material.color.setHex(on);v.userData.act.material.emissive=new T.Color(on);v.userData.act.material.emissiveIntensity=0.32;});
-  bvs.forEach(v=>{v.userData.act.material.color.setHex(on);v.userData.act.material.emissive=new T.Color(on);v.userData.act.material.emissiveIntensity=0.32;});
+  allValves.forEach(v=>{const active=VROLE[v.userData.role].open.includes(m);const hex=active?on:0x55606a;v.userData.act.material.color.setHex(hex);v.userData.act.material.emissive=new T.Color(hex);v.userData.act.material.emissiveIntensity=active?0.32:0.0;});
   {const active=(m==='desorb');const hex=active?on:0x55606a;fv.userData.act.material.color.setHex(hex);fv.userData.act.material.emissive=new T.Color(hex);fv.userData.act.material.emissiveIntensity=active?0.32:0.0;}
   {const active=(m!=='desorb');const hex=active?on:0x55606a;dv.userData.act.material.color.setHex(hex);dv.userData.act.material.emissive=new T.Color(hex);dv.userData.act.material.emissiveIntensity=active?0.3:0.0;}
   colStatus.forEach(s=>{s.material.emissive.setHex(IND.mode[m]);s.material.emissiveIntensity=s.userData.statusBase;});
@@ -898,11 +916,11 @@ function startKiosk(){
     ['sorption',cols[5],17,1.5,6.5],
     ['wash',null,50,0,6],
     ['wash',freshT,22,1.3,5],
-    ['wash',dref.ec,9.5,0.45,5.5],
+    ['wash',valves[5].water,9.5,0.45,5.5],
     ['wash',spentT,22,1.4,4.5],
     ['desorb',null,52,0,7],
     ['desorb',acidT,22,1.5,5],
-    ['desorb',bvs[5],10,0.4,4.5],
+    ['desorb',valves[5].acid,10,0.4,4.5],
     ['desorb',cols[5],17,1.5,6.5],
     ['desorb',fv,12,0.4,6.5],
     ['desorb',eluateT,22,1.4,4.5],
@@ -937,7 +955,7 @@ function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDel
     if(!on){p.core.visible=false;continue;}
     const col=tmpC.setHex(pipeColor(p));p.core.visible=true;p.cmat.color.lerp(col,0.25);p.cmat.emissive.lerp(col,0.25);
     const slow=(state.mode==='desorb');
-    const dir=(state.mode==='desorb'&&(p.kind.startsWith('tdrop_')||p.kind.startsWith('bdrop_')))?1:-1;
+    const dir=(state.mode==='desorb'&&(p.kind.startsWith('ctop_')||p.kind.startsWith('cbot_')))?1:-1;
     p.cmat.map.offset.x+=dir*dt*(slow?0.4:0.62)*(RM?0.5:1);}
   scene.traverse(o=>{if(o.userData&&o.userData.wave)o.material.opacity=0.74+0.06*Math.sin(performance.now()*0.0015);});
   if(!RM){const _pt=performance.now()*0.001;for(let i=0;i<pulseRings.length;i++){const _o=pulseRings[i],_p=_o.userData.pr;const _k=0.5+0.5*Math.sin(_pt*_p.spd+_p.phase);_o.material.opacity=_p.base*(0.28+0.72*_k)*(_o.userData.algae?(0.5+0.7*algaeBloom):1);_o.scale.setScalar(_p.smin+(_p.smax-_p.smin)*_k);}}
